@@ -79,7 +79,6 @@ def genetic_algorithm(history_numbers, population_size=100, generations=100):
     return sorted(population, key=lambda ind: calculate_fitness(ind, history_numbers), reverse=True)[:10]
 
 # 检查并去重并确保范围合法
-# 检查并去重并确保范围合法
 def remove_duplicates(prediction):
     main_numbers = prediction[:6]
     bonus_number = prediction[6]
@@ -91,8 +90,8 @@ def remove_duplicates(prediction):
         new_number = random.randint(1, 40)
         if new_number not in main_numbers:
             main_numbers.append(new_number)
-        # 对主号码进行排序
     main_numbers.sort()
+
     # 确保bonus_number在1到40范围内
     if bonus_number < 1 or bonus_number > 40:
         bonus_number = random.randint(1, 40)
@@ -133,7 +132,6 @@ def simulated_annealing(history_numbers, initial_state, temp, alpha, stopping_te
 
     return best_state
 
-
 # 蚁群算法部分
 class Ant:
     def __init__(self, num_main_numbers=6, num_bonus_numbers=1, num_powerball_numbers=1):
@@ -169,8 +167,7 @@ def update_pheromone(pheromone, ants, evaporation_rate, Q):
             if number - 1 < len(pheromone):  # 确保索引合法
                 pheromone[number - 1] += Q / len(ant.route)  # 假设号码从1开始
 
-
-def ant_colony_optimization(history_numbers, num_ants=50, num_iterations=100, alpha=1.0, beta=1.0, evaporation_rate=0.5, Q=100):
+def ant_colony_optimization(history_numbers, num_ants=50, num_iterations=100, alpha=1.0, beta=1.0, evaporation_rate=0.5, Q=100, num_predictions=5):
     num_main_numbers = 40
     num_bonus_numbers = 40
     num_powerball_numbers = 10
@@ -183,32 +180,40 @@ def ant_colony_optimization(history_numbers, num_ants=50, num_iterations=100, al
     heuristic_bonus = np.ones(num_bonus_numbers)
     heuristic_powerball = np.ones(num_powerball_numbers)
 
-    best_route = None
-    best_fitness = 0
+    best_routes = []
 
-    for _ in range(num_iterations):
-        ants = [Ant() for _ in range(num_ants)]
-        for ant in ants:
-            ant.build_route(pheromone_main, pheromone_bonus, pheromone_powerball, heuristic_main, heuristic_bonus, heuristic_powerball, alpha, beta)
-            ant.route = remove_duplicates(ant.route)
-            valid, message = validate_lottery_numbers(ant.route)
-            if not valid:
-                continue
+    for _ in range(num_predictions):  # 进行num_predictions次运行以生成指定组数的结果
+        best_route = None
+        best_fitness = 0
 
-            fitness = calculate_fitness(ant.route, history_numbers)
-            if fitness > best_fitness:
-                best_fitness = fitness
-                best_route = list(ant.route)
+        for _ in range(num_iterations):
+            ants = [Ant() for _ in range(num_ants)]
+            for ant in ants:
+                ant.build_route(pheromone_main, pheromone_bonus, pheromone_powerball, heuristic_main, heuristic_bonus, heuristic_powerball, alpha, beta)
+                ant.route = remove_duplicates(ant.route)
+                valid, message = validate_lottery_numbers(ant.route)
+                if not valid:
+                    continue
 
-        update_pheromone(pheromone_main, ants, evaporation_rate, Q)
-        update_pheromone(pheromone_bonus, ants, evaporation_rate, Q)
-        update_pheromone(pheromone_powerball, ants, evaporation_rate, Q)
+                fitness = calculate_fitness(ant.route, history_numbers)
+                if fitness > best_fitness:
+                    best_fitness = fitness
+                    best_route = list(ant.route)
 
-    return best_route
+            update_pheromone(pheromone_main, ants, evaporation_rate, Q)
+            update_pheromone(pheromone_bonus, ants, evaporation_rate, Q)
+            update_pheromone(pheromone_powerball, ants, evaporation_rate, Q)
 
+        best_routes.append(best_route)
+
+    return best_routes
 
 # Example usage
-data = get_lotto_from_db("select * from lotto")
+data = get_lotto_from_db("select * from lotto order by id")
+last_data = data[-1]
+lastResult=last_data[2:10]
+#data=data[0:len(data) - 1]
+
 X_train, y_train, history_numbers = convert_data(data)
 X_train = np.expand_dims(X_train, axis=1)
 
@@ -223,8 +228,11 @@ model.fit(X_train, y_train, epochs=50, batch_size=32)
 # 预测彩票号码
 predictions = []
 max_similarities = []
-for _ in range(10):
-    predicted_numbers = model.predict(X_train[-1].reshape(1, 1, X_train.shape[2]))[0]
+num_predictions = 10
+while len(predictions) < num_predictions:
+    # 增加随机性
+    random_index = random.randint(0, len(X_train) - 1)
+    predicted_numbers = model.predict(X_train[random_index].reshape(1, 1, X_train.shape[2]))[0]
     predicted_numbers = np.round(predicted_numbers).astype(int)
 
     predicted_numbers[:6] = check_and_fix_range(predicted_numbers[:6], 1, 40)
@@ -232,10 +240,14 @@ for _ in range(10):
     predicted_numbers[7:] = check_and_fix_range(predicted_numbers[7:], 1, 10)
 
     predicted_numbers = remove_duplicates(predicted_numbers)
+
     valid, message = validate_lottery_numbers(predicted_numbers)
-    if valid:
+    max_similarity = max(calculate_similarity(predicted_numbers, history) for history in history_numbers)
+    if valid and max_similarity < 0.6:
+        # 计算预测值与历史数据的相似度最大值
+        max_similarities.append(max_similarity)
+        # 检查相似度，如果低于设定的阈值则添加到预测结果中
         predictions.append(predicted_numbers)
-    max_similarities.append(max([calculate_similarity(predicted_numbers, history) for history in history_numbers]))
 
 # 打印预测结果和相似度最大值
 for i, prediction in enumerate(predictions):
@@ -298,7 +310,14 @@ print("Simulated Annealing Main Numbers:", predicted_main_numbers)
 print("Simulated Annealing Bonus Number:", predicted_bonus_number)
 print("Simulated Annealing Powerball Number:", predicted_powerball_number)
 
-
 # 使用蚁群算法进行彩票预测
-aco_prediction = ant_colony_optimization(history_numbers)
-print("Simulated aco_prediction Main Numbers:", aco_prediction)
+aco_predictions = ant_colony_optimization(history_numbers, num_predictions=5)
+print("\n使用蚁群算法预测结果:")
+for i, prediction in enumerate(aco_predictions):
+    predicted_main_numbers = sorted(prediction[:6])
+    predicted_bonus_number = prediction[6]
+    predicted_powerball_number = prediction[7]
+    print(f"ACO Prediction {i + 1}:")
+    print("ACO Main Numbers:", predicted_main_numbers)
+    print("ACO Bonus Number:", predicted_bonus_number)
+    print("ACO Powerball Number:", predicted_powerball_number)
